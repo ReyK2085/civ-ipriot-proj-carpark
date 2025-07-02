@@ -77,55 +77,102 @@ class CarParkDisplay:
     fields = ['Available bays', 'Temperature', 'At']
 
     def __init__(self):
-        self.window = WindowedDisplay(
-            'Moondalup', CarParkDisplay.fields)
-        updater = threading.Thread(target=self.check_updates)
-        updater.daemon = True
-        updater.start()
+        self.window = WindowedDisplay('Moondalup', CarParkDisplay.fields)
+        # Initial state
+        self.available_bays = 150
+        self.temperature = '25℃'
+        self.last_event_time = time.strftime("%H:%M:%S")
+        self.update_display()
+        # No timer/thread: display updates only on event
         self.window.show()
 
-    def check_updates(self):
-        # TODO: This is where you should manage the MQTT subscription
-        while True:
-            # NOTE: Dictionary keys *must* be the same as the class fields
-            field_values = dict(zip(CarParkDisplay.fields, [
-                f'{random.randint(0, 150):03d}',
-                f'{random.randint(0, 45):02d}℃',
-                time.strftime("%H:%M:%S")]))
-            # Pretending to wait on updates from MQTT
-            time.sleep(random.randint(1, 10))
-            # When you get an update, refresh the display.
-            self.window.update(field_values)
+    def car_in(self, license_plate: str):
+        if self.available_bays > 0:
+            self.available_bays -= 1
+        self.last_event_time = time.strftime("%H:%M:%S")
+        self.update_display()
+
+    def car_out(self, license_plate: str):
+        if self.available_bays < 150:
+            self.available_bays += 1
+        self.last_event_time = time.strftime("%H:%M:%S")
+        self.update_display()
+
+    def temperature_changed(self, temp_value: str):
+        # Validate temperature (should be an integer or float, e.g. 23 or 23.5)
+        try:
+            temp = float(temp_value)
+            if temp < -30 or temp > 60:
+                raise ValueError
+            self.temperature = f"{temp:.1f}℃"
+        except Exception:
+            self.temperature = "ERR"
+        self.last_event_time = time.strftime("%H:%M:%S")
+        self.update_display()
+
+    def update_display(self):
+        field_values = {
+            'Available bays': f'{self.available_bays:03d}',
+            'Temperature': self.temperature,
+            'At': self.last_event_time
+        }
+        self.window.update(field_values)
 
 
 class CarDetector:
     """Provides a couple of simple buttons that can be used to represent a sensor detecting a car. This is a skeleton only."""
 
-    def __init__(self):
+    def __init__(self, display=None):
+        self.display = display
         self.root = tk.Tk()
         self.root.title("Car Detector ULTRA")
 
+        # License plate entry
+        tk.Label(self.root, text="License Plate:", font=('Arial', 20)).pack(padx=10, pady=2)
+        self.plate_entry = tk.Entry(self.root, font=('Arial', 30))
+        self.plate_entry.pack(padx=10, pady=2)
+
+        # Temperature entry
+        tk.Label(self.root, text="Temperature:", font=('Arial', 20)).pack(padx=10, pady=2)
+        self.temp_entry = tk.Entry(self.root, font=('Arial', 30))
+        self.temp_entry.pack(padx=10, pady=2)
+        self.temp_btn = tk.Button(self.root, text='Set Temperature', font=('Arial', 20), command=self.set_temperature)
+        self.temp_btn.pack(padx=10, pady=2)
+
         self.btn_incoming_car = tk.Button(
-            self.root, text='🚘 Incoming Car', font=('Arial', 50), cursor='right_side', command=self.incoming_car)
+            self.root, text='Incoming Car', font=('Arial', 50), cursor='right_side', command=self.incoming_car)
         self.btn_incoming_car.pack(padx=10, pady=5)
         self.btn_outgoing_car = tk.Button(
-            self.root, text='Outgoing Car 🚘',  font=('Arial', 50), cursor='bottom_left_corner', command=self.outgoing_car)
+            self.root, text='Outgoing Car',  font=('Arial', 50), cursor='bottom_left_corner', command=self.outgoing_car)
         self.btn_outgoing_car.pack(padx=10, pady=5)
 
         self.root.mainloop()
 
     def incoming_car(self):
-        # TODO: implement this method to publish the detection via MQTT
-        print("Car goes in")
+        plate = self.plate_entry.get()
+        if self.display:
+            self.display.car_in(plate)
+        print(f"Car goes in: {plate}")
 
     def outgoing_car(self):
-        # TODO: implement this method to publish the detection via MQTT
-        print("Car goes out")
+        plate = self.plate_entry.get()
+        if self.display:
+            self.display.car_out(plate)
+        print(f"Car goes out: {plate}")
+
+    def set_temperature(self):
+        temp = self.temp_entry.get()
+        if self.display:
+            self.display.temperature_changed(temp)
+        print(f"Temperature set: {temp}")
 
 
 if __name__ == '__main__':
-    # TODO: Run each of these classes in a separate terminal. You should see the CarParkDisplay update when you click the buttons in the CarDetector.
-    # These classes are not designed to be used in the same module - they are both blocking. If you uncomment one, comment-out the other.
-
-    CarParkDisplay()
-    # CarDetector()
+    # For demo: run both in one process, display in a thread, detector in main
+    display = CarParkDisplay()
+    # Start display in a thread so detector can run in mainloop
+    import threading
+    display_thread = threading.Thread(target=lambda: display.window.show())
+    display_thread.daemon = True
+    display_thread.start()
+    CarDetector(display=display)
